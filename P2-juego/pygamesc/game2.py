@@ -1,8 +1,10 @@
+
 import pygame
 import random
 import pandas as pd
-import numpy as np
-import tensorflow as tf
+from sklearn.model_selection import train_test_split
+from sklearn.tree import DecisionTreeClassifier, export_graphviz
+import graphviz
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense
 from sklearn.model_selection import train_test_split
@@ -21,9 +23,10 @@ BLANCO = (255, 255, 255)
 NEGRO = (0, 0, 0)
 
 # Variables del jugador, bala, nave, fondo, etc.
-jugador = pygame.Rect(50, h - 100, 32, 48)
-bala = pygame.Rect(w - 50, h - 90, 16, 16)
-nave = pygame.Rect(w - 100, h - 100, 64, 64)
+jugador = None
+bala = None
+fondo = None
+nave = None
 
 # Variables de salto
 salto = False
@@ -35,14 +38,13 @@ en_suelo = True
 pausa = False
 fuente = pygame.font.SysFont('Arial', 24)
 menu_activo = True
-modo_auto = False
+modo_auto_red = False
 
 # Lista para guardar los datos de velocidad, distancia y salto
 datos_modelo = []
 
-# Variables de la red neuronal
-model_nn = None
-scaler = None  # Normalizador para los datos
+# Variables del modelo
+clf = None  # Clasificador del árbol de decisión
 
 # Rutas completas de las imágenes
 jugador_frames = [
@@ -59,9 +61,10 @@ nave_img = pygame.image.load('C:/Users/rbece/Documents/iaP/TrabajosIA/P2-juego/p
 # Escalar la imagen de fondo
 fondo_img = pygame.transform.scale(fondo_img, (w, h))
 
-# Fondo en movimiento
-fondo_x1 = 0
-fondo_x2 = w
+# Crear rectángulos
+jugador = pygame.Rect(50, h - 100, 32, 48)
+bala = pygame.Rect(w - 50, h - 90, 16, 16)
+nave = pygame.Rect(w - 100, h - 100, 64, 64)
 
 # Variables de animación del jugador
 current_frame = 0
@@ -71,6 +74,10 @@ frame_count = 0
 # Variables de la bala
 velocidad_bala = -10
 bala_disparada = False
+
+# Fondo en movimiento
+fondo_x1 = 0
+fondo_x2 = w
 
 # Función para disparar la bala
 def disparar_bala():
@@ -126,16 +133,16 @@ def update():
     # Mover y dibujar la bala
     if bala_disparada:
         bala.x += velocidad_bala
-        if bala.x < 0:
-            reset_bala()
+    if bala.x < 0:
+        reset_bala()
 
     pantalla.blit(bala_img, (bala.x, bala.y))
 
     # Colisión entre la bala y el jugador
     if jugador.colliderect(bala):
         print("Colisión detectada!")
-        if not modo_auto:
-            entrenar_red_neuronal()
+        if not modo_auto_red:
+            entrenar_modelo()
         reiniciar_juego()
 
 # Función para guardar datos
@@ -145,8 +152,40 @@ def guardar_datos():
     salto_hecho = 1 if salto else 0
     datos_modelo.append((velocidad_bala, distancia, salto_hecho))
 
-# Función de entrenamiento de la red neuronal
-def entrenar_red_neuronal():
+
+def pausa_juego():
+    global pausa, modo_auto_red, menu_activo
+
+    pausa = not pausa
+    if pausa:
+        print("Juego pausado. Datos registrados hasta ahora:", datos_modelo)
+        
+        # Mostrar menú de pausa
+        while pausa:
+            pantalla.fill(NEGRO)
+            texto_continuar = fuente.render("Presiona 'C' para continuar", True, BLANCO)
+            texto_menu = fuente.render("Presiona 'M' para volver al menú principal", True, BLANCO)
+            pantalla.blit(texto_continuar, (w // 4, h // 2 - 30))
+            pantalla.blit(texto_menu, (w // 4, h // 2 + 10))
+            pygame.display.flip()
+
+            for evento in pygame.event.get():
+                if evento.type == pygame.QUIT:
+                    pygame.quit()
+                    exit()
+                if evento.type == pygame.KEYDOWN:
+                    if evento.key == pygame.K_c:  # Continuar
+                        pausa = False
+                    elif evento.key == pygame.K_m:  # Volver al menú principal
+                        if not modo_auto_red:  # Entrenar el modelo si no está en modo automático
+                            entrenar_modelo()
+                        reiniciar_juego()
+                        pausa = not pausa
+                        return
+
+
+# Función para entrenar el modelo
+def entrenar_modelo():
     global model_nn, scaler, datos_modelo
 
     if len(datos_modelo) > 0:
@@ -174,14 +213,25 @@ def entrenar_red_neuronal():
                          metrics=['accuracy'])
 
         # Entrenar la red neuronal
-        model_nn.fit(X_train, y_train, epochs=20, batch_size=32, verbose=1)
+        model_nn.fit(X_train, y_train, epochs=200, batch_size=32, verbose=1)
 
         # Evaluar el modelo
         loss, accuracy = model_nn.evaluate(X_test, y_test, verbose=0)
         print(f"\nPrecisión en el conjunto de prueba: {accuracy:.2f}")
 
-# Función para modo automático usando la red neuronal
+
+# Función de modo automático
 def modo_juego_automatico():
+    global clf, jugador, bala, velocidad_bala, salto, en_suelo
+    print('sixd')
+    if clf is not None:
+        distancia = abs(jugador.x - bala.x)
+        prediccion = clf.predict([[velocidad_bala, distancia]])[0]
+        if prediccion == 1 and en_suelo:
+            salto = True
+            en_suelo = False
+
+def modo_juego_automatico_red():
     global model_nn, jugador, bala, velocidad_bala, salto, en_suelo
 
     if model_nn is not None:
@@ -193,40 +243,10 @@ def modo_juego_automatico():
         prediccion = model_nn.predict(X_input)[0][0]
 
         # Decidir si saltar
+        print(prediccion)
         if prediccion > 0.5 and en_suelo:  # Umbral de decisión
             salto = True
             en_suelo = False
-
-# Función para manejar la pausa del juego
-def pausa_juego():
-    global pausa, modo_auto, menu_activo
-
-    pausa = not pausa
-    if pausa:
-        print("Juego pausado. Datos registrados hasta ahora:", datos_modelo)
-        
-        # Mostrar menú de pausa
-        while pausa:
-            pantalla.fill(NEGRO)
-            texto_continuar = fuente.render("Presiona 'C' para continuar", True, BLANCO)
-            texto_menu = fuente.render("Presiona 'M' para volver al menú principal", True, BLANCO)
-            pantalla.blit(texto_continuar, (w // 4, h // 2 - 30))
-            pantalla.blit(texto_menu, (w // 4, h // 2 + 10))
-            pygame.display.flip()
-
-            for evento in pygame.event.get():
-                if evento.type == pygame.QUIT:
-                    pygame.quit()
-                    exit()
-                if evento.type == pygame.KEYDOWN:
-                    if evento.key == pygame.K_c:  # Continuar
-                        pausa = False
-                    elif evento.key == pygame.K_m:  # Volver al menú principal
-                        if not modo_auto:  # Entrenar la red neuronal si no está en modo automático
-                            entrenar_red_neuronal()
-                        reiniciar_juego()
-                        pausa = not pausa
-                        return
 
 # Función para reiniciar el juego
 def reiniciar_juego():
@@ -243,7 +263,7 @@ def reiniciar_juego():
 
 # Función para mostrar el menú
 def mostrar_menu():
-    global menu_activo, modo_auto
+    global menu_activo, modo_auto_red
     pantalla.fill(NEGRO)
     texto = fuente.render("Presiona 'A' para Auto, 'M' para Manual, o 'Q' para Salir", True, BLANCO)
     pantalla.blit(texto, (w // 4, h // 2))
@@ -256,10 +276,10 @@ def mostrar_menu():
                 exit()
             if evento.type == pygame.KEYDOWN:
                 if evento.key == pygame.K_a:
-                    modo_auto = True
+                    modo_auto_red = True
                     menu_activo = False
                 elif evento.key == pygame.K_m:
-                    modo_auto = False
+                    modo_auto_red = False
                     menu_activo = False
                 elif evento.key == pygame.K_q:
                     print("Juego terminado. Datos recopilados:", datos_modelo)
@@ -279,28 +299,34 @@ def main():
             if evento.type == pygame.QUIT:
                 correr = False
             if evento.type == pygame.KEYDOWN:
-                if evento.key == pygame.K_SPACE and en_suelo and not pausa and not modo_auto:  # Salto
+                if evento.key == pygame.K_SPACE and en_suelo and not pausa and not modo_auto_red:
                     salto = True
                     en_suelo = False
-                if evento.key == pygame.K_p:  # Pausa
+                if evento.key == pygame.K_p:
                     pausa_juego()
-                if evento.key == pygame.K_q:  # Salir
-                    correr = False
+                if evento.key == pygame.K_q:
+                    print("Juego terminado. Datos recopilados:", datos_modelo)
+                    pygame.quit()
+                    exit()
 
         if not pausa:
-            if not modo_auto:
-                guardar_datos()
+            if modo_auto_red:
+                modo_juego_automatico_red()
+                #modo_juego_automatico()
+                if salto:
+                    manejar_salto()
             else:
-                modo_juego_automatico()
-            manejar_salto()
+                guardar_datos()
+                if salto:
+                    manejar_salto()
+            if not bala_disparada:
+                disparar_bala()
             update()
 
         pygame.display.flip()
         reloj.tick(30)
 
     pygame.quit()
-    exit()
 
-# Ejecutar juego
 if __name__ == "__main__":
     main()

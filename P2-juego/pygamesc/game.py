@@ -1,12 +1,11 @@
 import pygame
 import random
 import pandas as pd
-import numpy as np
-import tensorflow as tf
+from sklearn.model_selection import train_test_split
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MinMaxScaler
 
 # Inicializar Pygame
 pygame.init()
@@ -21,9 +20,9 @@ BLANCO = (255, 255, 255)
 NEGRO = (0, 0, 0)
 
 # Variables del jugador, bala, nave, fondo, etc.
-jugador = pygame.Rect(50, h - 100, 32, 48)
-bala = pygame.Rect(w - 50, h - 90, 16, 16)
-nave = pygame.Rect(w - 100, h - 100, 64, 64)
+jugador = None
+bala = None
+nave = None
 
 # Variables de salto
 salto = False
@@ -35,33 +34,33 @@ en_suelo = True
 pausa = False
 fuente = pygame.font.SysFont('Arial', 24)
 menu_activo = True
-modo_auto = False
 
 # Lista para guardar los datos de velocidad, distancia y salto
 datos_modelo = []
 
-# Variables de la red neuronal
-model_nn = None
-scaler = None  # Normalizador para los datos
+# Variables del modelo
+clf_arbol = None  # Clasificador del árbol de decisión
+model_nn = None   # Modelo de red neuronal
+scaler = None     # Escalador para la red neuronal
 
-# Rutas completas de las imágenes
+# Rutas completas de las imágenes (ajusta las rutas según tu sistema)
 jugador_frames = [
-    pygame.image.load('C:/Users/rbece/Documents/iaP/TrabajosIA/P2-juego/pygamesc/assets/sprites/mono_frame_1.png'),
-    pygame.image.load('C:/Users/rbece/Documents/iaP/TrabajosIA/P2-juego/pygamesc/assets/sprites/mono_frame_2.png'),
-    pygame.image.load('C:/Users/rbece/Documents/iaP/TrabajosIA/P2-juego/pygamesc/assets/sprites/mono_frame_3.png'),
-    pygame.image.load('C:/Users/rbece/Documents/iaP/TrabajosIA/P2-juego/pygamesc/assets/sprites/mono_frame_4.png')
+    pygame.image.load('ruta_a_sprite_1.png'),
+    pygame.image.load('ruta_a_sprite_2.png'),
+    pygame.image.load('ruta_a_sprite_3.png'),
+    pygame.image.load('ruta_a_sprite_4.png')
 ]
-
-bala_img = pygame.image.load('C:/Users/rbece/Documents/iaP/TrabajosIA/P2-juego/pygamesc/assets/sprites/purple_ball.png')
-fondo_img = pygame.image.load('C:/Users/rbece/Documents/iaP/TrabajosIA/P2-juego/pygamesc/assets/game/fondo2.png')
-nave_img = pygame.image.load('C:/Users/rbece/Documents/iaP/TrabajosIA/P2-juego/pygamesc/assets/game/ufo.png')
+bala_img = pygame.image.load('ruta_a_bala.png')
+fondo_img = pygame.image.load('ruta_a_fondo.png')
+nave_img = pygame.image.load('ruta_a_nave.png')
 
 # Escalar la imagen de fondo
 fondo_img = pygame.transform.scale(fondo_img, (w, h))
 
-# Fondo en movimiento
-fondo_x1 = 0
-fondo_x2 = w
+# Crear rectángulos para el jugador y objetos
+jugador = pygame.Rect(50, h - 100, 32, 48)
+bala = pygame.Rect(w - 50, h - 90, 16, 16)
+nave = pygame.Rect(w - 100, h - 100, 64, 64)
 
 # Variables de animación del jugador
 current_frame = 0
@@ -76,7 +75,7 @@ bala_disparada = False
 def disparar_bala():
     global bala_disparada, velocidad_bala
     if not bala_disparada:
-        velocidad_bala = random.randint(-8, -3)
+        velocidad_bala = random.randint(-9, -5)
         bala_disparada = True
 
 # Función para reiniciar la posición de la bala
@@ -88,219 +87,149 @@ def reset_bala():
 # Función para manejar el salto
 def manejar_salto():
     global jugador, salto, salto_altura, gravedad, en_suelo
-
     if salto:
         jugador.y -= salto_altura
         salto_altura -= gravedad
-        if jugador.y >= h - 100:
-            jugador.y = h - 100
-            salto = False
-            salto_altura = 15
-            en_suelo = True
+    
+    if jugador.y >= h - 100:
+        jugador.y = h - 100
+        salto = False
+        salto_altura = 15
+        en_suelo = True
 
-# Función para actualizar el juego
+# Función para actualizar el juego cada frame
 def update():
-    global bala, velocidad_bala, current_frame, frame_count, fondo_x1, fondo_x2
+    global bala, velocidad_bala, current_frame, frame_count
 
-    # Mover el fondo
-    fondo_x1 -= 1
-    fondo_x2 -= 1
-
-    if fondo_x1 <= -w:
-        fondo_x1 = w
-    if fondo_x2 <= -w:
-        fondo_x2 = w
-
-    pantalla.blit(fondo_img, (fondo_x1, 0))
-    pantalla.blit(fondo_img, (fondo_x2, 0))
-
-    # Animación del jugador
+    # Animación del jugador 
     frame_count += 1
+    
     if frame_count >= frame_speed:
         current_frame = (current_frame + 1) % len(jugador_frames)
         frame_count = 0
-
+    
+    pantalla.fill(NEGRO)
+    pantalla.blit(fondo_img, (0,0))
     pantalla.blit(jugador_frames[current_frame], (jugador.x, jugador.y))
     pantalla.blit(nave_img, (nave.x, nave.y))
 
-    # Mover y dibujar la bala
+    # Mover y dibujar la bala 
     if bala_disparada:
         bala.x += velocidad_bala
+        
         if bala.x < 0:
             reset_bala()
+        
+        pantalla.blit(bala_img, (bala.x, bala.y))
 
-    pantalla.blit(bala_img, (bala.x, bala.y))
-
-    # Colisión entre la bala y el jugador
-    if jugador.colliderect(bala):
-        print("Colisión detectada!")
-        if not modo_auto:
-            entrenar_red_neuronal()
-        reiniciar_juego()
-
-# Función para guardar datos
+# Función para guardar datos para entrenamiento 
 def guardar_datos():
     global jugador, bala, velocidad_bala, salto
+    
     distancia = abs(jugador.x - bala.x)
     salto_hecho = 1 if salto else 0
+    
     datos_modelo.append((velocidad_bala, distancia, salto_hecho))
 
-# Función de entrenamiento de la red neuronal
-def entrenar_red_neuronal():
-    global model_nn, scaler, datos_modelo
+# Función para pausar el juego 
+def pausa_juego():
+    global pausa
+    
+    pausa = not pausa
+    
+    if pausa:
+        print("Juego pausado. Datos registrados:", datos_modelo)
 
+# Función para entrenar el modelo de árbol de decisión 
+def entrenar_modelo_arbol():
+    global clf_arbol
+    
     if len(datos_modelo) > 0:
-        # Preparar los datos
         df = pd.DataFrame(datos_modelo, columns=["velocidad_bala", "distancia", "salto"])
+        
         X = df[["velocidad_bala", "distancia"]]
         y = df["salto"]
-
-        # Escalar las características
-        scaler = MinMaxScaler()
-        X = scaler.fit_transform(X)
-
-        # Dividir en conjuntos de entrenamiento y prueba
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-        # Crear la red neuronal
-        model_nn = Sequential([
-            Dense(4, input_dim=2, activation='relu'),  # Capa oculta
-            Dense(1, activation='sigmoid')  # Capa de salida
-        ])
-
-        # Compilar el modelo
-        model_nn.compile(optimizer='adam',
-                         loss='binary_crossentropy',
-                         metrics=['accuracy'])
-
-        # Entrenar la red neuronal
-        model_nn.fit(X_train, y_train, epochs=20, batch_size=32, verbose=1)
-
-        # Evaluar el modelo
-        loss, accuracy = model_nn.evaluate(X_test, y_test, verbose=0)
-        print(f"\nPrecisión en el conjunto de prueba: {accuracy:.2f}")
-
-# Función para modo automático usando la red neuronal
-def modo_juego_automatico():
-    global model_nn, jugador, bala, velocidad_bala, salto, en_suelo
-
-    if model_nn is not None:
-        # Preparar los datos de entrada
-        distancia = abs(jugador.x - bala.x)
-        X_input = scaler.transform([[velocidad_bala, distancia]])
-
-        # Realizar la predicción
-        prediccion = model_nn.predict(X_input)[0][0]
-
-        # Decidir si saltar
-        if prediccion > 0.5 and en_suelo:  # Umbral de decisión
-            salto = True
-            en_suelo = False
-
-# Función para manejar la pausa del juego
-def pausa_juego():
-    global pausa, modo_auto, menu_activo
-
-    pausa = not pausa
-    if pausa:
-        print("Juego pausado. Datos registrados hasta ahora:", datos_modelo)
         
-        # Mostrar menú de pausa
-        while pausa:
-            pantalla.fill(NEGRO)
-            texto_continuar = fuente.render("Presiona 'C' para continuar", True, BLANCO)
-            texto_menu = fuente.render("Presiona 'M' para volver al menú principal", True, BLANCO)
-            pantalla.blit(texto_continuar, (w // 4, h // 2 - 30))
-            pantalla.blit(texto_menu, (w // 4, h // 2 + 10))
-            pygame.display.flip()
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
 
-            for evento in pygame.event.get():
-                if evento.type == pygame.QUIT:
-                    pygame.quit()
-                    exit()
-                if evento.type == pygame.KEYDOWN:
-                    if evento.key == pygame.K_c:  # Continuar
-                        pausa = False
-                    elif evento.key == pygame.K_m:  # Volver al menú principal
-                        if not modo_auto:  # Entrenar la red neuronal si no está en modo automático
-                            entrenar_red_neuronal()
-                        reiniciar_juego()
-                        pausa = not pausa
-                        return
+        clf_arbol = DecisionTreeClassifier()
+        clf_arbol.fit(X_train.values.reshape(-1,2), y_train.values)
 
-# Función para reiniciar el juego
-def reiniciar_juego():
-    global menu_activo, jugador, bala, nave, bala_disparada, salto, en_suelo
-    print("Regresando al menú...")
-    menu_activo = True
-    mostrar_menu()
-    jugador.x, jugador.y = 50, h - 100
-    bala.x = w - 50
-    nave.x, nave.y = w - 100, h - 100
-    bala_disparada = False
-    salto = False
-    en_suelo = True
+        print("Modelo de árbol de decisión entrenado.")
 
-# Función para mostrar el menú
-def mostrar_menu():
-    global menu_activo, modo_auto
-    pantalla.fill(NEGRO)
-    texto = fuente.render("Presiona 'A' para Auto, 'M' para Manual, o 'Q' para Salir", True, BLANCO)
-    pantalla.blit(texto, (w // 4, h // 2))
-    pygame.display.flip()
+# Función para entrenar la red neuronal 
+def entrenar_modelo_red():
+    global model_nn
+    
+    if len(datos_modelo) > 0:
+        df = pd.DataFrame(datos_modelo, columns=["velocidad_bala", "distancia", "salto"])
+        
+        X = df[["velocidad_bala", "distancia"]]
+        y = df["salto"]
+        
+        # Escalar características 
+        scaler.fit(X)
+        X_scaled = scaler.transform(X)
 
-    while menu_activo:
+        X_train, X_test, y_train, y_test = train_test_split(X_scaled, y.values.reshape(-1), test_size=0.2)
+
+        model_nn = Sequential([
+            Dense(16, input_dim=2, activation='relu'),
+            Dense(1, activation='sigmoid')
+        ])
+        
+        model_nn.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+        
+        model_nn.fit(X_train.reshape(-1), y_train.reshape(-1), epochs=30)
+
+        loss, accuracy = model_nn.evaluate(X_test.reshape(-1), y_test.reshape(-1))
+        print(f"Precisión en el conjunto de prueba: {accuracy:.2f}")
+        
+        datos_modelo.clear() # Limpiar después de entrenar
+
+# Función principal para ejecutar el juego 
+def main():
+    global salto
+    
+    reloj = pygame.time.Clock()
+    
+    while True:
         for evento in pygame.event.get():
             if evento.type == pygame.QUIT:
                 pygame.quit()
-                exit()
+                return
+            
             if evento.type == pygame.KEYDOWN:
-                if evento.key == pygame.K_a:
-                    modo_auto = True
-                    menu_activo = False
-                elif evento.key == pygame.K_m:
-                    modo_auto = False
-                    menu_activo = False
-                elif evento.key == pygame.K_q:
+                if evento.key == pygame.K_SPACE and en_suelo and not pausa:
+                    salto = True
+                    en_suelo=False
+                
+                if evento.key == pygame.K_p: # Pausar el juego 
+                    pausa_juego()
+                
+                if evento.key == pygame.K_t: # Entrenar árbol de decisión 
+                    entrenar_modelo_arbol()
+                
+                if evento.key == pygame.K_r: # Entrenar red neuronal 
+                    entrenar_modelo_red()
+                
+                if evento.key == pygame.K_q: # Salir del juego 
                     print("Juego terminado. Datos recopilados:", datos_modelo)
                     pygame.quit()
-                    exit()
-
-# Función principal
-def main():
-    global salto, en_suelo, bala_disparada
-
-    reloj = pygame.time.Clock()
-    mostrar_menu()
-    correr = True
-
-    while correr:
-        for evento in pygame.event.get():
-            if evento.type == pygame.QUIT:
-                correr = False
-            if evento.type == pygame.KEYDOWN:
-                if evento.key == pygame.K_SPACE and en_suelo and not pausa and not modo_auto:  # Salto
-                    salto = True
-                    en_suelo = False
-                if evento.key == pygame.K_p:  # Pausa
-                    pausa_juego()
-                if evento.key == pygame.K_q:  # Salir
-                    correr = False
-
+                    return
+        
         if not pausa:
-            if not modo_auto:
-                guardar_datos()
-            else:
-                modo_juego_automatico()
-            manejar_salto()
-            update()
+            guardar_datos() # Guardar datos cada frame 
+            update() # Actualizar estado del juego 
+        
+            if salto:
+                manejar_salto()
 
-        pygame.display.flip()
-        reloj.tick(30)
+            if not bala_disparada:
+                disparar_bala()
 
-    pygame.quit()
-    exit()
+            pygame.display.flip()
+            reloj.tick(30) # Mantener tasa de frames 
 
-# Ejecutar juego
 if __name__ == "__main__":
     main()

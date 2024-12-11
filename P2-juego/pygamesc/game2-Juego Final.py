@@ -1,12 +1,14 @@
-
 import pygame
 import random
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.tree import DecisionTreeClassifier, export_graphviz
 import graphviz
+import numpy as np
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense
+from tensorflow.keras.layers import Dropout
+from tensorflow.keras.regularizers import l2
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 
@@ -39,13 +41,15 @@ pausa = False
 fuente = pygame.font.SysFont('Arial', 24)
 menu_activo = True
 modo_auto_red = False
+modo_auto_arbol = False
 
 # Lista para guardar los datos de velocidad, distancia y salto
 datos_modelo = []
 
 # Variables del modelo
 clf = None  # Clasificador del árbol de decisión
-
+model_nn = None
+scaler = None
 # Rutas completas de las imágenes
 jugador_frames = [
     pygame.image.load('C:/Users/rbece/Documents/iaP/TrabajosIA/P2-juego/pygamesc/assets/sprites/mono_frame_1.png'),
@@ -83,7 +87,7 @@ fondo_x2 = w
 def disparar_bala():
     global bala_disparada, velocidad_bala
     if not bala_disparada:
-        velocidad_bala = random.randint(-8, -3)
+        velocidad_bala = random.randint(-9, -5)
         bala_disparada = True
 
 # Función para reiniciar la posición de la bala
@@ -141,8 +145,11 @@ def update():
     # Colisión entre la bala y el jugador
     if jugador.colliderect(bala):
         print("Colisión detectada!")
-        if not modo_auto_red:
-            entrenar_modelo()
+        en_suelo=True
+        salto=False
+        if not modo_auto_red and not modo_auto_arbol:
+            entrenar_modelo_arbol()
+            entrenar_modelo_red()
         reiniciar_juego()
 
 # Función para guardar datos
@@ -177,22 +184,27 @@ def pausa_juego():
                     if evento.key == pygame.K_c:  # Continuar
                         pausa = False
                     elif evento.key == pygame.K_m:  # Volver al menú principal
-                        if not modo_auto_red:  # Entrenar el modelo si no está en modo automático
-                            entrenar_modelo()
+                        if not modo_auto_red and not modo_auto_arbol:  # Entrenar el modelo si no está en modo automático
+                            entrenar_modelo_arbol()
+                            entrenar_modelo_red()
                         reiniciar_juego()
                         pausa = not pausa
                         return
 
 
-# Función para entrenar el modelo
-def entrenar_modelo():
-    global model_nn, scaler, datos_modelo
+# Función para entrenar el mode
 
-    if len(datos_modelo) > 0:
+# Entrenar el modelo
+def entrenar_modelo_red():
+    global model_nn, scaler, datos_modelo
+     # Salir de la función sin entrenar el modelo
+
+    if len(datos_modelo) > 0 and not modo_auto_red and not modo_auto_arbol:
         # Preparar los datos
         df = pd.DataFrame(datos_modelo, columns=["velocidad_bala", "distancia", "salto"])
         X = df[["velocidad_bala", "distancia"]]
         y = df["salto"]
+        datos_modelo = []  # Reiniciar después de guardar los datos
 
         # Escalar las características
         scaler = MinMaxScaler()
@@ -200,36 +212,31 @@ def entrenar_modelo():
 
         # Dividir en conjuntos de entrenamiento y prueba
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        
 
-        # Crear la red neuronal
+        #if len(X_train) < 300:
+         #   print(f"Datos actuales: {len(X_train)} datos minimos permitidos: 300")
+          #  print("No hay suficientes datos para entrenar el modelo. Juega por mas tiempo y vuelve a intentarlo...")
+           # return 
+
         model_nn = Sequential([
-            Dense(4, input_dim=2, activation='relu'),  # Capa oculta
+            Dense(128, input_dim=2, activation='relu'),
+            Dense(128, input_dim=2, activation='relu'), 
+            Dense(128, input_dim=2, activation='relu'),
+            Dense(128, input_dim=2, activation='relu'),
             Dense(1, activation='sigmoid')  # Capa de salida
         ])
 
-        # Compilar el modelo
         model_nn.compile(optimizer='adam',
                          loss='binary_crossentropy',
                          metrics=['accuracy'])
 
-        # Entrenar la red neuronal
-        model_nn.fit(X_train, y_train, epochs=200, batch_size=32, verbose=1)
+        model_nn.fit(X_train, y_train, epochs=20, batch_size=8, verbose=1)
 
         # Evaluar el modelo
         loss, accuracy = model_nn.evaluate(X_test, y_test, verbose=0)
         print(f"\nPrecisión en el conjunto de prueba: {accuracy:.2f}")
-
-
-# Función de modo automático
-def modo_juego_automatico():
-    global clf, jugador, bala, velocidad_bala, salto, en_suelo
-    print('sixd')
-    if clf is not None:
-        distancia = abs(jugador.x - bala.x)
-        prediccion = clf.predict([[velocidad_bala, distancia]])[0]
-        if prediccion == 1 and en_suelo:
-            salto = True
-            en_suelo = False
+        print(len(X_train))
 
 def modo_juego_automatico_red():
     global model_nn, jugador, bala, velocidad_bala, salto, en_suelo
@@ -243,10 +250,35 @@ def modo_juego_automatico_red():
         prediccion = model_nn.predict(X_input)[0][0]
 
         # Decidir si saltar
-        print(prediccion)
-        if prediccion > 0.5 and en_suelo:  # Umbral de decisión
+        print(f"Predicción: {prediccion:.2f}")
+        if prediccion > 0.45 and en_suelo:  # Umbral ajustado a 0.5
             salto = True
             en_suelo = False
+    else:
+        print("El modelo no ha sido entrenado.")
+
+def entrenar_modelo_arbol():
+    global clf, datos_modelo
+    if len(datos_modelo) > 0 and not modo_auto_red and not modo_auto_arbol:
+        print('sixd')
+        df = pd.DataFrame(datos_modelo, columns=["velocidad_bala", "distancia", "salto"])
+        X = df[["velocidad_bala", "distancia"]]
+        y = df["salto"]
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        clf = DecisionTreeClassifier()
+        clf.fit(X_train, y_train)
+        print("Modelo entrenado con éxito.")
+        
+
+def modo_juego_automatico_arbol():
+    global clf, jugador, bala, velocidad_bala, salto, en_suelo
+    if clf is not None:
+        distancia = abs(jugador.x - bala.x)
+        prediccion = clf.predict([[velocidad_bala, distancia]])[0]
+        if prediccion == 1 and en_suelo:
+            salto = True
+            en_suelo = False
+
 
 # Función para reiniciar el juego
 def reiniciar_juego():
@@ -263,10 +295,10 @@ def reiniciar_juego():
 
 # Función para mostrar el menú
 def mostrar_menu():
-    global menu_activo, modo_auto_red
+    global menu_activo, modo_auto_red, modo_auto_arbol
     pantalla.fill(NEGRO)
-    texto = fuente.render("Presiona 'A' para Auto, 'M' para Manual, o 'Q' para Salir", True, BLANCO)
-    pantalla.blit(texto, (w // 4, h // 2))
+    texto = fuente.render("'M' para Manual, 'A' para Modo Arbol, R para modo red o 'Q' para Salir", True, BLANCO)
+    pantalla.blit(texto, (w // 6, h // 2))
     pygame.display.flip()
 
     while menu_activo:
@@ -275,12 +307,19 @@ def mostrar_menu():
                 pygame.quit()
                 exit()
             if evento.type == pygame.KEYDOWN:
-                if evento.key == pygame.K_a:
-                    modo_auto_red = True
+                if evento.key == pygame.K_m:
+                    modo_auto_red = False
+                    modo_auto_arbol = False
                     menu_activo = False
-                elif evento.key == pygame.K_m:
+                elif evento.key == pygame.K_a:
+                    modo_auto_arbol = True
                     modo_auto_red = False
                     menu_activo = False
+                elif evento.key == pygame.K_r:
+                    modo_auto_red = True
+                    modo_auto_arbol = False
+                    menu_activo = False
+                
                 elif evento.key == pygame.K_q:
                     print("Juego terminado. Datos recopilados:", datos_modelo)
                     pygame.quit()
@@ -299,7 +338,7 @@ def main():
             if evento.type == pygame.QUIT:
                 correr = False
             if evento.type == pygame.KEYDOWN:
-                if evento.key == pygame.K_SPACE and en_suelo and not pausa and not modo_auto_red:
+                if evento.key == pygame.K_SPACE and en_suelo and not pausa and not modo_auto_red and not modo_auto_arbol:
                     salto = True
                     en_suelo = False
                 if evento.key == pygame.K_p:
@@ -312,7 +351,10 @@ def main():
         if not pausa:
             if modo_auto_red:
                 modo_juego_automatico_red()
-                #modo_juego_automatico()
+                if salto:
+                    manejar_salto()
+            elif modo_auto_arbol:
+                modo_juego_automatico_arbol()
                 if salto:
                     manejar_salto()
             else:
